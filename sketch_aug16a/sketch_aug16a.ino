@@ -7,9 +7,19 @@ const uint16_t TCP_PORT = 9000;
 WiFiServer server(TCP_PORT);
 WiFiClient client;
 
-const int   PIN_EMG   = A0;
-const float ADC_REF_V = 3.3f;
-const int   ADC_RES   = 4095;
+const float ADC_REF_V = 3.3f;   // ADC reference voltage (V)
+const int   ADC_RES   = 4095;   // 12-bit resolution -> counts 0..4095
+
+struct Channel {
+  int pin;
+  const char* label;
+};
+
+const Channel CHANNELS[] = {
+  { A0, "left_bicep" },
+  { A1, "right_bicep" }
+};
+const size_t N_CH = sizeof(CHANNELS) / sizeof(CHANNELS[0]);
 
 const int LED = LED_BUILTIN;
 
@@ -41,14 +51,25 @@ void connectWifi() {
   Serial.println(WiFi.localIP());
 }
 
+void sendCsvHeader(WiFiClient& c) {
+  c.print("time_ms");
+
+  for (size_t i = 0; i < N_CH; ++i) {
+    c.print(","); 
+    c.print(CHANNELS[i].label); 
+    c.print("_mV");
+  }
+  c.print("\n");
+}
+
 void setup() {
   pinMode(LED, OUTPUT);
   digitalWrite(LED, LOW);
 
   Serial.begin(115200);
-  delay(1000);
+  delay(200);
 
-  connectWifi();
+  connectWifi(); // Error checking of some kind, really need a display rigged up to this thing.
   server.begin();
   Serial.print("TCP server started on: ");
   Serial.println(TCP_PORT);
@@ -57,7 +78,6 @@ void setup() {
 }
 
 void loop() {
-  // check for connection
   if (WiFi.status() != WL_CONNECTED) {
     blinkLED(250);
     WiFi.begin(ssid, password);
@@ -65,35 +85,31 @@ void loop() {
     return;
   }
 
-  // accept client and blink slowly while waiting
   if (!client || !client.connected()) {
     client = server.available();
     if (!client) {
-      blinkLED(600); // slow blink = wifi connected and waiting for client
-      /*long rssi = WiFi.RSSI();
-      Serial.print("rssi: ");
-      Serial.println(rssi);
-      */
+      blinkLED(600);
       delay(20);
       return;
     } else {
-      client.println("time_ms,raw,mV"); // header
+      sendCsvHeader(client);
     }
   }
 
-  // Client connected -> solid LED
-  digitalWrite(LED, HIGH); //TODO: LED doesn't turn on
+  digitalWrite(LED, HIGH);
 
-  // Sample and stream
   unsigned long t = millis();
-  int   raw = analogRead(PIN_EMG);
-  float mV  = (raw * ADC_REF_V * 1000.0f) / ADC_RES;
+  client.print(t);
 
-  client.print(t); client.print(",");
-  client.print(raw); client.print(",");
-  client.print((int)mV); client.print("\n");
+  for (size_t i = 0; i < N_CH; ++i) {
+    int   raw = analogRead(CHANNELS[i].pin);
+    float mV  = (raw * ADC_REF_V * 1000.0f) / ADC_RES;
 
-  // Handle disconnect
+    client.print(",");
+    client.print((int)mV);
+  }
+  client.print("\n");
+
   if (!client.connected()) {
     client.stop();
     digitalWrite(LED, LOW);
